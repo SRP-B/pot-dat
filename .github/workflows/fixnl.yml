@@ -1,0 +1,72 @@
+name: Fix Newlines
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+    
+jobs:
+  fix-newlines:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine changed files
+        id: changes
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE_SHA="${{ github.event.pull_request.base.sha }}"
+            HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+            CHANGED=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")
+          else
+            CHANGED=$(git diff --name-only HEAD~1 HEAD)
+          fi
+
+          echo "$CHANGED" > changed_files.txt
+          echo "changed=$CHANGED" >> $GITHUB_OUTPUT
+
+      - name: Auto-fix missing trailing newlines
+        run: |
+          FIXED=0
+
+          for f in $(cat changed_files.txt); do
+            # Skip deleted files
+            if [ ! -f "$f" ]; then
+              continue
+            fi
+
+            # Skip binary files
+            if ! grep -qI . "$f"; then
+              continue
+            fi
+
+            # Check last byte
+            if [ -n "$(tail -c1 "$f")" ]; then
+              echo "Fixing missing newline in: $f"
+              echo >> "$f"
+              FIXED=1
+            fi
+          done
+
+          if [ $FIXED -eq 0 ]; then
+            echo "No fixes needed"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add -A
+          git commit -m "chore: auto-fix missing trailing newlines" || true
+
+      - name: Push changes
+        if: success()
+        run: git push
